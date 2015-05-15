@@ -19,8 +19,6 @@ $plugin_info = array(
 * @copyright	Copyright (c) 2012, Callan Interactive
 */
 
-require_once("domparser.php");
-
 class YouTubee {
 
 	function __construct()
@@ -37,7 +35,6 @@ class YouTubee {
 			$user = $this->EE->TMPL->fetch_param('user');
 			$limit = $this->EE->TMPL->fetch_param('limit');
 			$key_limit = $this->EE->TMPL->fetch_param('key');
-			$feed_url = "http://gdata.youtube.com/feeds/base/users/" . $user . "/uploads?alt=rss&v=2&orderby=published&client=ytapi-youtube-profile";
 			
 			if($limit == "")
 			{
@@ -50,8 +47,10 @@ class YouTubee {
 			}
 		
 		/* Get the feed as an array */
-			$feed_array = $this->_get_data($feed_url,$limit,$key_limit);
             $i = 1;
+			$key = $this->EE->config->item('youtubee:googleapikey');
+			$playlist = $this->_get_playlist_for_user($user, $key);
+			$feed_array = $this->_get_data($playlist, $key, $limit, $key_limit);
 		
 			foreach($feed_array AS $video)
 			{
@@ -88,8 +87,22 @@ class YouTubee {
 		
 	}
 	
-	function _get_data($feed,$count = 0,$key_limit = NULL)
+	function _get_playlist_for_user($user, $key)
 	{
+		$url = 'https://www.googleapis.com/youtube/v3/channels?part=contentDetails&forUsername=' . urlencode($user) . '&key=' . urlencode($key);
+		try {
+			$data = @file_get_contents($url);
+			$data = json_decode($data, true);
+			return $data['items'][0]['contentDetails']['relatedPlaylists']['uploads'];
+		}
+		catch (Exception $e) {
+			return NULL;
+		}
+	}
+
+	function _get_data($playlist, $key, $count = 0, $key_limit = NULL)
+	{
+		$url = 'https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=' . urlencode($playlist) . '&key=' . urlencode($key);
 		
 		if($key_limit != NULL)
 		{
@@ -99,15 +112,14 @@ class YouTubee {
 		$feed_array = array();
 	
 		try{
-			$xml_feed = @file_get_contents($feed);
-			$xml = new SimpleXMLElement($xml_feed);
+			$data = @file_get_contents($url);
+			$data = json_decode($data, true);
 			$i = 0;
 	
-			foreach($xml->channel->item AS $entry){
+			foreach($data['items'] AS $entry){
 		
 				$push_data = FALSE;
-				$pubdate = (string)$entry->pubDate[0];
-				$entry_data = $this->_parse_item($entry->description);
+				$entry_data = $this->_parse_item($entry);
 	
 				if($count != 0)
 				{
@@ -151,11 +163,11 @@ class YouTubee {
 				{
 						
 					array_push($feed_array,array(
-						"title"=>$entry->title,
+						"title"=>$entry_data["title"],
 						"image"=>$entry_data["image"], 
 						"short_description"=>$entry_data["short_description"], 
 						"time"=>$entry_data["time"],
-						"date"=>$pubdate,
+						"date"=>$entry_data["date"],
 						"url"=>$entry_data["url"],
 						"views"=>number_format($entry_data["views"]),
 						"key" => $entry_data["key"]
@@ -175,33 +187,27 @@ class YouTubee {
 	
 	function _parse_item($item)
 	{
-		//echo($item);
-		
-		$dom = new domparser;
-		$html = $dom->str_get_html("<html><body>" . $item . "</body></html>");
-		
-		$image = $html->find('img',0)->src;
-		$url = $html->find('a',0)->href;
-		$short_description = $html->find('td',1)->find('a',0)->innertext;
-		$time = $html->find("tr",1)->find("td",0)->find("span",1)->innertext;
-		$views = $html->find("tr",0)->find("td",2)->find("div",1)->innertext;
-		$views = strip_tags($views);
-		$views = str_replace("Views:","",$views);
-		
-		$key = str_replace("http://www.youtube.com/watch?v=","",$url);
-		$key = str_replace("&amp;feature=youtube_gdata","",$key);
+		$title = $item['snippet']['title'];
+		$image = $item['snippet']['thumbnails']['standard']['url'];
+		$short_description = $item['snippet']['description'];
+		$time = '0:00'; // Google's v3 YouTube API does not return time.
+		$date = $item['snippet']['publishedAt'];
+		$views = 0; // Google's v3 YouTube API does not return views.
+		$key = $item['snippet']['resourceId']['videoId'];
+		$url = 'https://www.youtube.com/watch?v=' . urlencode($key);
 	
 		$data_array = array(
+			"title"=> $title,
 			"image"=> $image, 
 			"short_description"=> $short_description, 
 			"time"=>$time,
+			"date"=>$date,
 			"url"=>$url,
 			"views"=>$views,
 			"key"=>$key
 		);
 	
 		return $data_array;
-		
 	}
 		
 	function usage()
